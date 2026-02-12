@@ -28,7 +28,9 @@ jobs:
                   rm -rf /opt-host/az
                   df -h
             - name: Checkout sources
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
+              with:
+                  persist-credentials: false
 
             - name: Dependencies
               run: |
