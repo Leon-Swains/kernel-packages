@@ -11,7 +11,7 @@ on:
             - 'v*'
 
 env:
-    OCI_REPO: ghcr.io/${{ github.repository }}/nobara
+    OCI_REPO: ghcr.io/${{ github.repository }}-nobara
 
 permissions:
     contents: read

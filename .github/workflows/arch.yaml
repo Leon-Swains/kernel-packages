@@ -11,7 +11,7 @@ on:
             - 'v*'
 
 env:
-    OCI_REPO: ghcr.io/${{ github.repository }}/arch
+    OCI_REPO: ghcr.io/${{ github.repository }}-arch
 
 permissions:
     contents: read
