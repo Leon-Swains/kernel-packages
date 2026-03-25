@@ -62,13 +62,6 @@ jobs:
               with:
                   persist-credentials: false
 
-            - name: Create build user
-              run: |
-                  useradd -m build
-                  mkdir -p /home/build/linux
-                  cp -vR * /home/build/linux
-                  chown -vR build /home/build/linux
-
             - name: Set up pacman keyring
               run: |
                   pacman-key --init
@@ -94,29 +87,66 @@ jobs:
                   echo "ogc_version=$OGC_VERSION" >> "$GITHUB_OUTPUT"
                   echo "kernel_version=$KERNEL_VERSION" >> "$GITHUB_OUTPUT"
                   echo "major_version=$MAJOR_VERSION" >> "$GITHUB_OUTPUT"
+                  OGC_REV="${OGC_VERSION##*-ogc}"
+                  BASE_KVER="${KERNEL_VERSION%.*}"
+                  STABLE_KVER="${KERNEL_VERSION##*.}"
+                  if [ "$STABLE_KVER" = "0" ]; then
+                    TAR_KVER="$BASE_KVER"
+                  else
+                    TAR_KVER="$KERNEL_VERSION"
+                  fi
+                  echo "ogc_rev=$OGC_REV" >> "$GITHUB_OUTPUT"
+                  echo "base_kver=$BASE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "stable_kver=$STABLE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "tar_kver=$TAR_KVER" >> "$GITHUB_OUTPUT"
 
-            - name: Download and extract kernel source
+            - name: Substitute versions
               shell: bash
               run: |
-                  KERNEL_VERSION="${{ steps.version.outputs.kernel_version }}"
+                  OGC_VERSION="${{ steps.version.outputs.ogc_version }}"
+                  ARCH_PKGVER="${OGC_VERSION/-/.}"
+                  TAR_KVER="${{ steps.version.outputs.tar_kver }}"
+                  sed -i \
+                    -e "s/@@OGC_VERSION@@/${ARCH_PKGVER}/" \
+                    -e "s/@@TAR_KVER@@/${TAR_KVER}/" \
+                    arch/PKGBUILD
+
+            - name: Create build user
+              run: |
+                  useradd -m build
+                  mkdir -p /home/build/linux
+                  cp -vR * /home/build/linux
+                  chown -vR build /home/build/linux
+
+            - name: Download and verify kernel source
+              shell: bash
+              run: |
+                  TAR_KVER="${{ steps.version.outputs.tar_kver }}"
                   MAJOR_VERSION="${{ steps.version.outputs.major_version }}"
                   OGC_VERSION="${{ steps.version.outputs.ogc_version }}"
-                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${KERNEL_VERSION}.tar.xz
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.xz
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.sign
                   wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch
-                  tar -xf linux-${KERNEL_VERSION}.tar.xz
-                  cd linux-${KERNEL_VERSION}
+                  # Import kernel.org signing keys (Linus Torvalds & Greg Kroah-Hartman)
+                  gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys \
+                    ABAF11C65A2970B130ABE3C479BE3E4300411886 \
+                    647F28654894E3BD457199BE38DBBDC86092693E
+                  # Verify kernel tarball signature
+                  xz -dc linux-${TAR_KVER}.tar.xz | gpg --verify linux-${TAR_KVER}.tar.sign -
+                  tar -xf linux-${TAR_KVER}.tar.xz
+                  cd linux-${TAR_KVER}
                   patch -Np1 < ../monolithic.patch
 
             - name: Generate default config
               shell: bash
               run: |
-                  cd linux-${{ steps.version.outputs.kernel_version }}
+                  cd linux-${{ steps.version.outputs.tar_kver }}
                   make defconfig
 
             - name: Configure kernel
               uses: OpenGamingCollective/kernel-configurator@5b4abc58a2edf89941180dbbe33b26415db23b0b # v1.0.1
               with:
-                  config: linux-${{ steps.version.outputs.kernel_version }}/.config
+                  config: linux-${{ steps.version.outputs.tar_kver }}/.config
                   set: |
                       global.config.set
                       arch/config.set
@@ -128,12 +158,12 @@ jobs:
               id: build-kernel-package
               shell: bash
               run: |
-                  KERNEL_VERSION="${{ steps.version.outputs.kernel_version }}"
+                  TAR_KVER="${{ steps.version.outputs.tar_kver }}"
                   # Pre-populate makepkg source cache
-                  cp linux-${KERNEL_VERSION}.tar.xz /home/build/linux/arch/
+                  cp linux-${TAR_KVER}.tar.xz /home/build/linux/arch/
                   cp monolithic.patch /home/build/linux/arch/
                   # Copy patched config
-                  cp linux-${KERNEL_VERSION}/.config /home/build/linux/arch/config
+                  cp linux-${TAR_KVER}/.config /home/build/linux/arch/config
                   chown -R build /home/build/linux
                   su build bash -c "cd /home/build/linux/arch && MAKEFLAGS=-j$(nproc) makepkg --skippgpcheck --skipchecksums --skipinteg"
                   . /home/build/linux/arch/PKGBUILD

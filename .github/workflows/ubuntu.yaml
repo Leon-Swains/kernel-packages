@@ -66,7 +66,7 @@ jobs:
               run: |
                   export DEBIAN_FRONTEND=noninteractive
                   apt-get update -y
-                  apt-get install -y build-essential devscripts debhelper dh-python asciidoc-base bc bison cpio dwarves flex jq kmod libdw-dev libiberty-dev libnuma-dev  libslang2-dev lz4 rsync wget xmlto git curl sed
+                  apt-get install -y build-essential devscripts debhelper dh-python asciidoc-base bc bison cpio dwarves flex gnupg jq kmod libdw-dev libiberty-dev libnuma-dev  libslang2-dev lz4 rsync wget xmlto git curl sed
                   apt-get install -y libunwind-dev libpfm4-dev coccinelle openjdk-17-jdk libcapstone-dev libbabeltrace-dev systemtap-sdt-dev libzstd-dev dwarves zstd libbfd-dev libperl-dev libssl-dev
 
             - name: Get version
@@ -84,27 +84,46 @@ jobs:
                   echo "ogc_version=$OGC_VERSION" >> "$GITHUB_OUTPUT"
                   echo "kernel_version=$KERNEL_VERSION" >> "$GITHUB_OUTPUT"
                   echo "major_version=$MAJOR_VERSION" >> "$GITHUB_OUTPUT"
+                  OGC_REV="${OGC_VERSION##*-ogc}"
+                  BASE_KVER="${KERNEL_VERSION%.*}"
+                  STABLE_KVER="${KERNEL_VERSION##*.}"
+                  if [ "$STABLE_KVER" = "0" ]; then
+                    TAR_KVER="$BASE_KVER"
+                  else
+                    TAR_KVER="$KERNEL_VERSION"
+                  fi
+                  echo "ogc_rev=$OGC_REV" >> "$GITHUB_OUTPUT"
+                  echo "base_kver=$BASE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "stable_kver=$STABLE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "tar_kver=$TAR_KVER" >> "$GITHUB_OUTPUT"
 
-            - name: Download and extract kernel source
+            - name: Download and verify kernel source
               run: |
-                  KERNEL_VERSION="${{ steps.version.outputs.kernel_version }}"
+                  TAR_KVER="${{ steps.version.outputs.tar_kver }}"
                   MAJOR_VERSION="${{ steps.version.outputs.major_version }}"
                   OGC_VERSION="${{ steps.version.outputs.ogc_version }}"
-                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${KERNEL_VERSION}.tar.xz
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.xz
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.sign
                   wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch
-                  tar -xf linux-${KERNEL_VERSION}.tar.xz
-                  cd linux-${KERNEL_VERSION}
+                  # Import kernel.org signing keys (Linus Torvalds & Greg Kroah-Hartman)
+                  gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys \
+                    ABAF11C65A2970B130ABE3C479BE3E4300411886 \
+                    647F28654894E3BD457199BE38DBBDC86092693E
+                  # Verify kernel tarball signature
+                  xz -dc linux-${TAR_KVER}.tar.xz | gpg --verify linux-${TAR_KVER}.tar.sign -
+                  tar -xf linux-${TAR_KVER}.tar.xz
+                  cd linux-${TAR_KVER}
                   patch -Np1 < ../monolithic.patch
 
             - name: Generate default config
               run: |
-                  cd linux-${{ steps.version.outputs.kernel_version }}
+                  cd linux-${{ steps.version.outputs.tar_kver }}
                   make defconfig
 
             - name: Configure kernel
               uses: OpenGamingCollective/kernel-configurator@5b4abc58a2edf89941180dbbe33b26415db23b0b # v1.0.1
               with:
-                  config: linux-${{ steps.version.outputs.kernel_version }}/.config
+                  config: linux-${{ steps.version.outputs.tar_kver }}/.config
                   set: |
                       global.config.set
                       ubuntu/config.set
@@ -114,7 +133,7 @@ jobs:
 
             - name: Build
               run: |
-                  cd linux-${{ steps.version.outputs.kernel_version }}
+                  cd linux-${{ steps.version.outputs.tar_kver }}
                   fakeroot make -j$(nproc) bindeb-pkg
 
             - name: Setup ORAS

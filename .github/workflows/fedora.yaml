@@ -62,11 +62,6 @@ jobs:
               with:
                   persist-credentials: false
 
-            - name: Dependencies
-              run: |
-                  dnf -y builddep fedora/kernel.spec
-                  dnf -y install jq sed wget
-
             - name: Get version
               id: version
               shell: bash
@@ -79,32 +74,66 @@ jobs:
                   fi
                   KERNEL_VERSION="${OGC_VERSION%-ogc*}"
                   MAJOR_VERSION="${KERNEL_VERSION%%.*}.x"
+                  OGC_REV="${OGC_VERSION##*-ogc}"
+                  BASE_KVER="${KERNEL_VERSION%.*}"
+                  STABLE_KVER="${KERNEL_VERSION##*.}"
+                  if [ "$STABLE_KVER" = "0" ]; then
+                    TAR_KVER="$BASE_KVER"
+                  else
+                    TAR_KVER="$KERNEL_VERSION"
+                  fi
                   echo "ogc_version=$OGC_VERSION" >> "$GITHUB_OUTPUT"
                   echo "kernel_version=$KERNEL_VERSION" >> "$GITHUB_OUTPUT"
                   echo "major_version=$MAJOR_VERSION" >> "$GITHUB_OUTPUT"
+                  echo "ogc_rev=$OGC_REV" >> "$GITHUB_OUTPUT"
+                  echo "base_kver=$BASE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "stable_kver=$STABLE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "tar_kver=$TAR_KVER" >> "$GITHUB_OUTPUT"
 
-            - name: Download and extract kernel source
+            - name: Substitute versions
               shell: bash
               run: |
-                  KERNEL_VERSION="${{ steps.version.outputs.kernel_version }}"
+                  sed -i \
+                    -e "s/@@BASEKVER@@/${{ steps.version.outputs.base_kver }}/" \
+                    -e "s/@@STABLEKVER@@/${{ steps.version.outputs.stable_kver }}/" \
+                    -e "s/@@OGCVER@@/${{ steps.version.outputs.ogc_rev }}/" \
+                    -e "s/@@MAJOR_VERSION@@/${{ steps.version.outputs.major_version }}/" \
+                    fedora/kernel.spec
+
+            - name: Dependencies
+              run: |
+                  dnf -y builddep fedora/kernel.spec
+                  dnf -y install gnupg2 jq sed wget
+
+            - name: Download and verify kernel source
+              shell: bash
+              run: |
+                  TAR_KVER="${{ steps.version.outputs.tar_kver }}"
                   MAJOR_VERSION="${{ steps.version.outputs.major_version }}"
                   OGC_VERSION="${{ steps.version.outputs.ogc_version }}"
-                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${KERNEL_VERSION}.tar.xz
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.xz
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.sign
                   wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch
-                  tar -xf linux-${KERNEL_VERSION}.tar.xz
-                  cd linux-${KERNEL_VERSION}
+                  # Import kernel.org signing keys (Linus Torvalds & Greg Kroah-Hartman)
+                  gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys \
+                    ABAF11C65A2970B130ABE3C479BE3E4300411886 \
+                    647F28654894E3BD457199BE38DBBDC86092693E
+                  # Verify kernel tarball signature
+                  xz -dc linux-${TAR_KVER}.tar.xz | gpg --verify linux-${TAR_KVER}.tar.sign -
+                  tar -xf linux-${TAR_KVER}.tar.xz
+                  cd linux-${TAR_KVER}
                   patch -Np1 < ../monolithic.patch
 
             - name: Generate default config
               shell: bash
               run: |
-                  cd linux-${{ steps.version.outputs.kernel_version }}
+                  cd linux-${{ steps.version.outputs.tar_kver }}
                   make defconfig
 
             - name: Configure kernel
               uses: OpenGamingCollective/kernel-configurator@5b4abc58a2edf89941180dbbe33b26415db23b0b # v1.0.1
               with:
-                  config: linux-${{ steps.version.outputs.kernel_version }}/.config
+                  config: linux-${{ steps.version.outputs.tar_kver }}/.config
                   set: |
                       global.config.set
                       fedora/config.set
@@ -114,15 +143,15 @@ jobs:
 
             - name: Build
               run: |
-                  KERNEL_VERSION="${{ steps.version.outputs.kernel_version }}"
+                  TAR_KVER="${{ steps.version.outputs.tar_kver }}"
                   TOPDIR="$(pwd)/rpmbuild"
                   mkdir -p "$TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
                   # Pre-populate SOURCES with already-downloaded files
-                  cp linux-${KERNEL_VERSION}.tar.xz "$TOPDIR/SOURCES/"
+                  cp linux-${TAR_KVER}.tar.xz "$TOPDIR/SOURCES/"
                   cp monolithic.patch "$TOPDIR/SOURCES/"
                   cp fedora/kvm_stat.logrotate "$TOPDIR/SOURCES/"
                   # Copy patched config
-                  cp linux-${KERNEL_VERSION}/.config "$TOPDIR/SOURCES/config"
+                  cp linux-${TAR_KVER}/.config "$TOPDIR/SOURCES/config"
                   rpmbuild --define "_topdir $TOPDIR" -ba ./fedora/kernel.spec
 
             - name: Setup ORAS
