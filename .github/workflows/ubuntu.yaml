@@ -105,12 +105,17 @@ jobs:
                   wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.xz
                   wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.sign
                   wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch
+                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch.sig
                   # Import kernel.org signing keys (Linus Torvalds & Greg Kroah-Hartman)
                   gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys \
                     ABAF11C65A2970B130ABE3C479BE3E4300411886 \
                     647F28654894E3BD457199BE38DBBDC86092693E
+                  # Import OGC patch signing key
+                  gpg --import $GITHUB_WORKSPACE/public.key
                   # Verify kernel tarball signature
                   xz -dc linux-${TAR_KVER}.tar.xz | gpg --verify linux-${TAR_KVER}.tar.sign -
+                  # Verify OGC monolithic patch signature
+                  gpg --verify monolithic.patch.sig monolithic.patch
                   tar -xf linux-${TAR_KVER}.tar.xz
                   cd linux-${TAR_KVER}
                   patch -Np1 < ../monolithic.patch

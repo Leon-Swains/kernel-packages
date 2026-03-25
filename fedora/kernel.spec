@@ -58,7 +58,7 @@ License: GPLv2 and Redistributable, no modifications permitted
 Group: System Environment/Kernel
 Vendor: The Linux Community and OGC maintainer(s)
 URL: https://opengamingcollective.org
-Source0: https://cdn.kernel.org/pub/linux/kernel/v@@MAJOR_VERSION@@/linux-%{_tarkver}.tar.xz
+Source0: linux-%{_tarkver}.tar.xz
 Source1: config
 # needed for kernel-tools
 Source2: kvm_stat.logrotate
