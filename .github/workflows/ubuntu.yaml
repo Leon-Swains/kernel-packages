@@ -15,9 +15,6 @@ env:
 
 permissions:
     contents: read
-    packages: write
-    id-token: write
-    attestations: write
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,6 +23,13 @@ concurrency:
 jobs:
     build-deb:
         runs-on: ubuntu-latest
+
+        permissions:
+            contents: read
+            packages: write
+            id-token: write
+            attestations: write
+            artifact-metadata: write
 
         container:
             image: ubuntu:latest
@@ -62,31 +66,88 @@ jobs:
               run: |
                   export DEBIAN_FRONTEND=noninteractive
                   apt-get update -y
-                  apt-get install -y build-essential devscripts debhelper dh-python asciidoc-base bc bison cpio dwarves flex jq kmod libdw-dev libiberty-dev libnuma-dev  libslang2-dev lz4 rsync wget xmlto git curl sed
+                  apt-get install -y build-essential devscripts debhelper dh-python asciidoc-base bc bison cpio dwarves flex gnupg jq kmod libdw-dev libiberty-dev libnuma-dev  libslang2-dev lz4 rsync wget xmlto git curl sed
                   apt-get install -y libunwind-dev libpfm4-dev coccinelle openjdk-17-jdk libcapstone-dev libbabeltrace-dev systemtap-sdt-dev libzstd-dev dwarves zstd libbfd-dev libperl-dev libssl-dev
 
-            - name: Get sources
+            - name: Get version
+              id: version
+              shell: bash
               run: |
-                  wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.19.8.tar.xz
-                  wget https://github.com/OpenGamingCollective/linux/releases/download/v6.19.8-ogc1/monolithic.patch
-                  tar -xf linux-6.19.8.tar.xz
-                  cd linux-6.19.8
-                  cp ../config .config
-                  sed -i 's/^CONFIG_LSM=.*/CONFIG_LSM="landlock,lockdown,yama,integrity,apparmor,bpf"/' .config
-                  patch -Np1 < "../monolithic.patch"
+                  if [ -n "${{ github.event.inputs.version }}" ]; then
+                    OGC_VERSION="${{ github.event.inputs.version }}"
+                  else
+                    TAG="${{ github.ref_name }}"
+                    OGC_VERSION="${TAG#v}"
+                  fi
+                  KERNEL_VERSION="${OGC_VERSION%-ogc*}"
+                  MAJOR_VERSION="${KERNEL_VERSION%%.*}.x"
+                  echo "ogc_version=$OGC_VERSION" >> "$GITHUB_OUTPUT"
+                  echo "kernel_version=$KERNEL_VERSION" >> "$GITHUB_OUTPUT"
+                  echo "major_version=$MAJOR_VERSION" >> "$GITHUB_OUTPUT"
+                  OGC_REV="${OGC_VERSION##*-ogc}"
+                  BASE_KVER="${KERNEL_VERSION%.*}"
+                  STABLE_KVER="${KERNEL_VERSION##*.}"
+                  if [ "$STABLE_KVER" = "0" ]; then
+                    TAR_KVER="$BASE_KVER"
+                  else
+                    TAR_KVER="$KERNEL_VERSION"
+                  fi
+                  echo "ogc_rev=$OGC_REV" >> "$GITHUB_OUTPUT"
+                  echo "base_kver=$BASE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "stable_kver=$STABLE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "tar_kver=$TAR_KVER" >> "$GITHUB_OUTPUT"
+
+            - name: Download and verify kernel source
+              run: |
+                  TAR_KVER="${{ steps.version.outputs.tar_kver }}"
+                  MAJOR_VERSION="${{ steps.version.outputs.major_version }}"
+                  OGC_VERSION="${{ steps.version.outputs.ogc_version }}"
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.xz
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.sign
+                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch
+                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch.sig
+                  # Import kernel.org signing keys (Linus Torvalds & Greg Kroah-Hartman)
+                  gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys \
+                    ABAF11C65A2970B130ABE3C479BE3E4300411886 \
+                    647F28654894E3BD457199BE38DBBDC86092693E
+                  # Import OGC patch signing key
+                  gpg --import $GITHUB_WORKSPACE/public.key
+                  # Verify kernel tarball signature
+                  xz -dc linux-${TAR_KVER}.tar.xz | gpg --verify linux-${TAR_KVER}.tar.sign -
+                  # Verify OGC monolithic patch signature
+                  gpg --verify monolithic.patch.sig monolithic.patch
+                  tar -xf linux-${TAR_KVER}.tar.xz
+                  cd linux-${TAR_KVER}
+                  patch -Np1 < ../monolithic.patch
+
+            - name: Merge kernel configuration files
+              uses: OpenGamingCollective/kernel-configurator@5b4abc58a2edf89941180dbbe33b26415db23b0b # v1.0.1
+              with:
+                  config: ubuntu/config
+                  set: |
+                      config/ubuntu.config.set
+                      config/ogc.config.set
+                  unset: |
+                      config/ubuntu.config.unset
+                      config/ogc.config.unset
+                  output: linux-${{ steps.version.outputs.tar_kver }}/.config
+
+            - name: Validate combined kernel config file
+              shell: bash
+              run: |
+                  cd linux-${{ steps.version.outputs.tar_kver }}
+                  make olddefconfig
+
+            - name: Upload kernel config
+              uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+              with:
+                  name: kernel-config
+                  path: linux-${{ steps.version.outputs.tar_kver }}/.config
 
             - name: Build
               run: |
-                  cd linux-6.19.8
-                  make olddefconfig
+                  cd linux-${{ steps.version.outputs.tar_kver }}
                   fakeroot make -j$(nproc) bindeb-pkg
-
-            - name: Get OGC version
-              if: startsWith(github.ref, 'refs/tags/')
-              id: version
-              run: |
-                  TAG="${{ github.ref_name }}"
-                  echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
             - name: Setup ORAS
               if: startsWith(github.ref, 'refs/tags/')
@@ -105,7 +166,7 @@ jobs:
               if: startsWith(github.ref, 'refs/tags/')
               id: push
               run: |
-                  VERSION="${{ steps.version.outputs.version }}"
+                  VERSION="${{ steps.version.outputs.ogc_version }}"
                   REPO="${{ env.OCI_REPO }}"
                   cd $GITHUB_WORKSPACE
                   DIGEST=$(oras push --format json "${REPO}:${VERSION}" ./*.deb | jq -r '.digest')
@@ -116,6 +177,14 @@ jobs:
                   oras tag "${REPO}:${VERSION}" latest
                   echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
+            - name: Sign artifacts
+              if: startsWith(github.ref, 'refs/tags/')
+              run: |
+                  VERSION="${{ steps.version.outputs.ogc_version }}"
+                  REPO="${{ env.OCI_REPO }}"
+                  cosign sign --yes "${REPO}:${VERSION}"
+                  cosign sign --yes "${REPO}:latest"
+
             - name: Attest build provenance
               if: startsWith(github.ref, 'refs/tags/')
               uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
@@ -124,18 +193,10 @@ jobs:
                   subject-digest: ${{ steps.push.outputs.digest }}
                   push-to-registry: true
 
-            - name: Sign artifacts
-              if: startsWith(github.ref, 'refs/tags/')
-              run: |
-                  VERSION="${{ steps.version.outputs.version }}"
-                  REPO="${{ env.OCI_REPO }}"
-                  cosign sign --yes "${REPO}:${VERSION}"
-                  cosign sign --yes "${REPO}:latest"
-
             - name: Verify signature
               if: startsWith(github.ref, 'refs/tags/')
               run: |
-                  VERSION="${{ steps.version.outputs.version }}"
+                  VERSION="${{ steps.version.outputs.ogc_version }}"
                   REPO="${{ env.OCI_REPO }}"
                   cosign verify \
                     --certificate-identity-regexp=".*" \

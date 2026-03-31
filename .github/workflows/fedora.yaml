@@ -15,9 +15,6 @@ env:
 
 permissions:
     contents: read
-    packages: write
-    id-token: write
-    attestations: write
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,6 +23,13 @@ concurrency:
 jobs:
     build-rpm:
         runs-on: ubuntu-latest
+
+        permissions:
+            contents: read
+            packages: write
+            id-token: write
+            attestations: write
+            artifact-metadata: write
 
         container:
             image: fedora:latest
@@ -58,30 +62,108 @@ jobs:
               with:
                   persist-credentials: false
 
+            - name: Get version
+              id: version
+              shell: bash
+              run: |
+                  if [ -n "${{ github.event.inputs.version }}" ]; then
+                    OGC_VERSION="${{ github.event.inputs.version }}"
+                  else
+                    TAG="${{ github.ref_name }}"
+                    OGC_VERSION="${TAG#v}"
+                  fi
+                  KERNEL_VERSION="${OGC_VERSION%-ogc*}"
+                  MAJOR_VERSION="${KERNEL_VERSION%%.*}.x"
+                  OGC_REV="${OGC_VERSION##*-ogc}"
+                  BASE_KVER="${KERNEL_VERSION%.*}"
+                  STABLE_KVER="${KERNEL_VERSION##*.}"
+                  if [ "$STABLE_KVER" = "0" ]; then
+                    TAR_KVER="$BASE_KVER"
+                  else
+                    TAR_KVER="$KERNEL_VERSION"
+                  fi
+                  echo "ogc_version=$OGC_VERSION" >> "$GITHUB_OUTPUT"
+                  echo "kernel_version=$KERNEL_VERSION" >> "$GITHUB_OUTPUT"
+                  echo "major_version=$MAJOR_VERSION" >> "$GITHUB_OUTPUT"
+                  echo "ogc_rev=$OGC_REV" >> "$GITHUB_OUTPUT"
+                  echo "base_kver=$BASE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "stable_kver=$STABLE_KVER" >> "$GITHUB_OUTPUT"
+                  echo "tar_kver=$TAR_KVER" >> "$GITHUB_OUTPUT"
+
+            - name: Substitute versions
+              shell: bash
+              run: |
+                  sed -i \
+                    -e "s/@@BASEKVER@@/${{ steps.version.outputs.base_kver }}/" \
+                    -e "s/@@STABLEKVER@@/${{ steps.version.outputs.stable_kver }}/" \
+                    -e "s/@@OGCVER@@/${{ steps.version.outputs.ogc_rev }}/" \
+                    fedora/kernel.spec
+
             - name: Dependencies
               run: |
                   dnf -y builddep fedora/kernel.spec
-                  dnf -y install jq sed
+                  dnf -y install gnupg2 jq sed wget
 
-            - name: Configure SELinux as default LSM
+            - name: Download and verify kernel source
+              shell: bash
               run: |
-                  sed -i 's/^CONFIG_LSM=.*/CONFIG_LSM="landlock,lockdown,yama,integrity,selinux,bpf"/' config
+                  TAR_KVER="${{ steps.version.outputs.tar_kver }}"
+                  MAJOR_VERSION="${{ steps.version.outputs.major_version }}"
+                  OGC_VERSION="${{ steps.version.outputs.ogc_version }}"
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.xz
+                  wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.sign
+                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch
+                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch.sig
+                  # Import kernel.org signing keys (Linus Torvalds & Greg Kroah-Hartman)
+                  gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys \
+                    ABAF11C65A2970B130ABE3C479BE3E4300411886 \
+                    647F28654894E3BD457199BE38DBBDC86092693E
+                  # Import OGC patch signing key
+                  gpg --import $GITHUB_WORKSPACE/public.key
+                  # Verify kernel tarball signature
+                  xz -dc linux-${TAR_KVER}.tar.xz | gpg --verify linux-${TAR_KVER}.tar.sign -
+                  # Verify OGC monolithic patch signature
+                  gpg --verify monolithic.patch.sig monolithic.patch
+                  tar -xf linux-${TAR_KVER}.tar.xz
+                  cd linux-${TAR_KVER}
+                  patch -Np1 < ../monolithic.patch
 
-            - name: build
+            - name: Merge kernel configuration files
+              uses: OpenGamingCollective/kernel-configurator@5b4abc58a2edf89941180dbbe33b26415db23b0b # v1.0.1
+              with:
+                  config: fedora/config
+                  set: |
+                      config/fedora.config.set
+                      config/ogc.config.set
+                  unset: |
+                      config/fedora.config.unset
+                      config/ogc.config.unset
+                  output: linux-${{ steps.version.outputs.tar_kver }}/.config
+
+            - name: Validate combined kernel config file
+              shell: bash
               run: |
+                  cd linux-${{ steps.version.outputs.tar_kver }}
+                  make olddefconfig
+
+            - name: Upload kernel config
+              uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+              with:
+                  name: kernel-config
+                  path: linux-${{ steps.version.outputs.tar_kver }}/.config
+
+            - name: Build
+              run: |
+                  TAR_KVER="${{ steps.version.outputs.tar_kver }}"
                   TOPDIR="$(pwd)/rpmbuild"
-
                   mkdir -p "$TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-                  cp fedora/* $TOPDIR/SOURCES
-
+                  # Pre-populate SOURCES with already-downloaded files
+                  cp linux-${TAR_KVER}.tar.xz "$TOPDIR/SOURCES/"
+                  cp monolithic.patch "$TOPDIR/SOURCES/"
+                  cp fedora/kvm_stat.logrotate "$TOPDIR/SOURCES/"
+                  # Copy patched config
+                  cp linux-${TAR_KVER}/.config "$TOPDIR/SOURCES/config"
                   rpmbuild --define "_topdir $TOPDIR" -ba ./fedora/kernel.spec
-
-            - name: Get OGC version
-              if: startsWith(github.ref, 'refs/tags/')
-              id: version
-              run: |
-                  TAG="${{ github.ref_name }}"
-                  echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
             - name: Setup ORAS
               if: startsWith(github.ref, 'refs/tags/')
@@ -100,7 +182,7 @@ jobs:
               if: startsWith(github.ref, 'refs/tags/')
               id: push
               run: |
-                  VERSION="${{ steps.version.outputs.version }}"
+                  VERSION="${{ steps.version.outputs.ogc_version }}"
                   REPO="${{ env.OCI_REPO }}"
                   TOPDIR="$(pwd)/rpmbuild"
                   mkdir -p /tmp/rpms
@@ -115,6 +197,14 @@ jobs:
                   oras tag "${REPO}:${VERSION}" latest
                   echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
+            - name: Sign artifacts
+              if: startsWith(github.ref, 'refs/tags/')
+              run: |
+                  VERSION="${{ steps.version.outputs.ogc_version }}"
+                  REPO="${{ env.OCI_REPO }}"
+                  cosign sign --yes "${REPO}:${VERSION}"
+                  cosign sign --yes "${REPO}:latest"
+
             - name: Attest build provenance
               if: startsWith(github.ref, 'refs/tags/')
               uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
@@ -123,18 +213,10 @@ jobs:
                   subject-digest: ${{ steps.push.outputs.digest }}
                   push-to-registry: true
 
-            - name: Sign artifacts
-              if: startsWith(github.ref, 'refs/tags/')
-              run: |
-                  VERSION="${{ steps.version.outputs.version }}"
-                  REPO="${{ env.OCI_REPO }}"
-                  cosign sign --yes "${REPO}:${VERSION}"
-                  cosign sign --yes "${REPO}:latest"
-
             - name: Verify signature
               if: startsWith(github.ref, 'refs/tags/')
               run: |
-                  VERSION="${{ steps.version.outputs.version }}"
+                  VERSION="${{ steps.version.outputs.ogc_version }}"
                   REPO="${{ env.OCI_REPO }}"
                   cosign verify \
                     --certificate-identity-regexp=".*" \

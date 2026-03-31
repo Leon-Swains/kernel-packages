@@ -1,16 +1,15 @@
-### Based on linux-cachyos (https://github.com/CachyOS/linux-cachyos/tree/master/linux-cachyos) for the Fedora operating system.
+### spec file based on linux-cachyos (https://github.com/CachyOS/linux-cachyos/tree/master/linux-cachyos) for the Fedora operating system.
 ### Licensed as GPLv3
-### The authors of linux-cachyos patchset:
+### The authors of linux-cachyos patchset (Not used here):
 # Peter Jung ptr1337 <admin@ptr1337.dev>
 # Piotr Gorski sirlucjan <piotrgorski@cachyos.org>
 ### The port maintainer for Fedora:
 # bieszczaders <zbyszek@linux.pl>
 # https://copr.fedorainfracloud.org/coprs/bieszczaders/
 %global _default_patch_fuzz 2
-%global _is_rc 0
 
 %define _build_id_links none
-%define _disable_source_fetch 0
+%define _disable_source_fetch 1
 
 # See https://fedoraproject.org/wiki/Changes/SetBuildFlagsBuildCheck to why this has to be done
 %if 0%{?fedora} >= 37
@@ -35,33 +34,23 @@
 Name: kernel
 Summary: The Linux Kernel with Open Gaming Collective (OGC) patches
 
-%define _basekver 6.19
-%define _stablekver 8
-%define _rcver rc7
+%define _basekver @@BASEKVER@@
+%define _stablekver @@STABLEKVER@@
 %if %{_stablekver} == 0
 %define _tarkver %{_basekver}
 %else
 %define _tarkver %{_basekver}.%{_stablekver}
 %endif
-%if 0%{?_is_rc}
-%define _tarkver %{_basekver}-%{_rcver}
-%endif
 
 Version: %{_basekver}.%{_stablekver}
 
-%if 0%{?_is_rc}
-%define customver 0.%{_rcver}
-%else
-%define customver 200
-%endif
-
-Release:%{customver}.ogc%{?dist}
+%define ogcver @@OGCVER@@
+Release: ogc%{ogcver}%{?dist}
 
 # Define rawhide fedora version
 %define _rawhidever 44
 
 %define rpmver %{version}-%{release}
-%define rpmverobsolete 6.12.9-200.fsync%{?dist}
 %define krelstr %{release}.%{_arch}
 %define kverstr %{version}-%{krelstr}
 
@@ -69,7 +58,7 @@ License: GPLv2 and Redistributable, no modifications permitted
 Group: System Environment/Kernel
 Vendor: The Linux Community and OGC maintainer(s)
 URL: https://opengamingcollective.org
-Source0: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-%{_tarkver}.tar.xz
+Source0: linux-%{_tarkver}.tar.xz
 Source1: config
 # needed for kernel-tools
 Source2: kvm_stat.logrotate
@@ -78,7 +67,7 @@ Source2: kvm_stat.logrotate
 ExcludeArch:    %{ix86}
 
 # Stable patches
-Patch0: https://github.com/OpenGamingCollective/linux/releases/download/v6.19.8-ogc1/monolithic.patch
+Patch0: monolithic.patch
 
 %define __spec_install_post /usr/lib/rpm/brp-compress || :
 %define debug_package %{nil}
@@ -151,7 +140,6 @@ Requires: %{name}-core-%{rpmver} = %{kverstr}
 Requires: %{name}-modules-%{rpmver} = %{kverstr}
 Provides: %{name}%{_basekver} = %{rpmver}
 Provides: kernel-uki-vert = %{rpmver}
-Obsoletes: kernel <= %{rpmverobsolete}
 
 %description
 The kernel-%{flavor} meta package
@@ -353,9 +341,6 @@ scripts/config -u DEFAULT_HOSTNAME
 
 # Set kernel version string as build salt
 scripts/config --set-str BUILD_SALT "%{kverstr}"
-
-# Finalize the patched config
-make %{?_smp_mflags} %{?llvm_build_env_vars} EXTRAVERSION=-%{krelstr} olddefconfig
 
 # Save configuration for later reuse
 cat .config > config-linux-ogc
