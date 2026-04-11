@@ -173,8 +173,8 @@ jobs:
                   SOGC_VERSION="${{ steps.version.outputs.sogc_version }}"
                   wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.xz
                   wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.sign
-                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${SOGC_VERSION}/monolithic.patch
-                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${SOGC_VERSION}/monolithic.patch.sig
+                  wget https://github.com/Leon-Swains/linux/releases/download/v${SOGC_VERSION}/monolithic.patch
+                  wget https://github.com/Leon-Swains/linux/releases/download/v${SOGC_VERSION}/monolithic.patch.sig
                   # Import kernel.org signing keys (Linus Torvalds & Greg Kroah-Hartman)
                   gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys \
                     ABAF11C65A2970B130ABE3C479BE3E4300411886 \
