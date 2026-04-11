@@ -4,7 +4,7 @@ on:
     workflow_dispatch:
         inputs:
             version:
-                description: 'Enter a tagged OGC kernel version in the format <kernel-version>-ogc<rev>'
+                description: 'Enter a tagged SOGC kernel version in the format <kernel-version>-sogc<rev>'
                 required: true
     push:
         tags:
@@ -71,14 +71,14 @@ jobs:
               shell: bash
               run: |
                   if [ -n "${{ github.event.inputs.version }}" ]; then
-                    OGC_VERSION="${{ github.event.inputs.version }}"
+                    SOGC_VERSION="${{ github.event.inputs.version }}"
                   else
                     TAG="${{ github.ref_name }}"
-                    OGC_VERSION="${TAG#v}"
+                    SOGC_VERSION="${TAG#v}"
                   fi
-                  KERNEL_VERSION="${OGC_VERSION%-ogc*}"
+                  KERNEL_VERSION="${SOGC_VERSION%-sogc*}"
                   MAJOR_VERSION="${KERNEL_VERSION%%.*}.x"
-                  OGC_REV="${OGC_VERSION##*-ogc}"
+                  SOGC_REV="${SOGC_VERSION##*-sogc}"
                   BASE_KVER="${KERNEL_VERSION%.*}"
                   STABLE_KVER="${KERNEL_VERSION##*.}"
                   if [ "$STABLE_KVER" = "0" ]; then
@@ -86,10 +86,10 @@ jobs:
                   else
                     TAR_KVER="$KERNEL_VERSION"
                   fi
-                  echo "ogc_version=$OGC_VERSION" >> "$GITHUB_OUTPUT"
+                  echo "sogc_version=$SOGC_VERSION" >> "$GITHUB_OUTPUT"
                   echo "kernel_version=$KERNEL_VERSION" >> "$GITHUB_OUTPUT"
                   echo "major_version=$MAJOR_VERSION" >> "$GITHUB_OUTPUT"
-                  echo "ogc_rev=$OGC_REV" >> "$GITHUB_OUTPUT"
+                  echo "sogc_rev=$SOGC_REV" >> "$GITHUB_OUTPUT"
                   echo "base_kver=$BASE_KVER" >> "$GITHUB_OUTPUT"
                   echo "stable_kver=$STABLE_KVER" >> "$GITHUB_OUTPUT"
                   echo "tar_kver=$TAR_KVER" >> "$GITHUB_OUTPUT"
@@ -103,16 +103,16 @@ jobs:
               run: |
                   HASH=$(
                     {
-                      echo "ogc_version=${{ steps.version.outputs.ogc_version }}"
+                      echo "sogc_version=${{ steps.version.outputs.sogc_version }}"
                       echo "fedora_version=${{ matrix.fedora_version }}"
                       sha256sum \
                         fedora/kernel.spec \
                         fedora/config \
                         fedora/kvm_stat.logrotate \
                         config/fedora.config.set \
-                        config/ogc.config.set \
+                        config/sogc.config.set \
                         config/fedora.config.unset \
-                        config/ogc.config.unset \
+                        config/sogc.config.unset \
                         .github/workflows/fedora.yaml
                     } | sha256sum | cut -d' ' -f1
                   )
@@ -139,7 +139,7 @@ jobs:
               id: buildnum
               shell: bash
               run: |
-                  VERSION_PREFIX="${{ steps.version.outputs.ogc_version }}"
+                  VERSION_PREFIX="${{ steps.version.outputs.sogc_version }}"
                   REPO="${OCI_REPO,,}"
                   EXISTING=$(oras repo tags "${REPO}" 2>/dev/null || true)
                   EXISTING=$(echo "$EXISTING" | { grep -cE "^${VERSION_PREFIX}\.[0-9]+-fc${{ matrix.fedora_version }}$" || true; })
@@ -154,7 +154,7 @@ jobs:
                   sed -i \
                     -e "s/@@BASEKVER@@/${{ steps.version.outputs.base_kver }}/" \
                     -e "s/@@STABLEKVER@@/${{ steps.version.outputs.stable_kver }}/" \
-                    -e "s/@@OGCVER@@/${{ steps.version.outputs.ogc_rev }}/" \
+                    -e "s/@@SOGCVER@@/${{ steps.version.outputs.sogc_rev }}/" \
                     -e "s/@@BUILDNUM@@/${{ steps.buildnum.outputs.build_num }}/" \
                     fedora/kernel.spec
 
@@ -170,20 +170,20 @@ jobs:
               run: |
                   TAR_KVER="${{ steps.version.outputs.tar_kver }}"
                   MAJOR_VERSION="${{ steps.version.outputs.major_version }}"
-                  OGC_VERSION="${{ steps.version.outputs.ogc_version }}"
+                  SOGC_VERSION="${{ steps.version.outputs.sogc_version }}"
                   wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.xz
                   wget https://cdn.kernel.org/pub/linux/kernel/v${MAJOR_VERSION}/linux-${TAR_KVER}.tar.sign
-                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch
-                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${OGC_VERSION}/monolithic.patch.sig
+                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${SOGC_VERSION}/monolithic.patch
+                  wget https://github.com/OpenGamingCollective/linux/releases/download/v${SOGC_VERSION}/monolithic.patch.sig
                   # Import kernel.org signing keys (Linus Torvalds & Greg Kroah-Hartman)
                   gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys \
                     ABAF11C65A2970B130ABE3C479BE3E4300411886 \
                     647F28654894E3BD457199BE38DBBDC86092693E
-                  # Import OGC patch signing key
+                  # Import SOGC patch signing key
                   gpg --import $GITHUB_WORKSPACE/public.key
                   # Verify kernel tarball signature
                   xz -dc linux-${TAR_KVER}.tar.xz | gpg --verify linux-${TAR_KVER}.tar.sign -
-                  # Verify OGC monolithic patch signature
+                  # Verify SOGC monolithic patch signature
                   gpg --verify monolithic.patch.sig monolithic.patch
                   tar -xf linux-${TAR_KVER}.tar.xz
                   cd linux-${TAR_KVER}
@@ -196,10 +196,10 @@ jobs:
                   config: fedora/config
                   set: |
                       config/fedora.config.set
-                      config/ogc.config.set
+                      config/sogc.config.set
                   unset: |
                       config/fedora.config.unset
-                      config/ogc.config.unset
+                      config/sogc.config.unset
                   output: linux-${{ steps.version.outputs.tar_kver }}/.config
 
             - name: Validate combined kernel config file
@@ -236,7 +236,7 @@ jobs:
               if: startsWith(github.ref, 'refs/tags/') && steps.check-existing.outputs.exists != 'true'
               id: push
               run: |
-                  VERSION="${{ steps.version.outputs.ogc_version }}.${{ steps.buildnum.outputs.build_num }}"
+                  VERSION="${{ steps.version.outputs.sogc_version }}.${{ steps.buildnum.outputs.build_num }}"
                   REPO="${{ env.OCI_REPO }}"
                   TOPDIR="$(pwd)/rpmbuild"
                   mkdir -p /tmp/rpms
@@ -255,14 +255,14 @@ jobs:
               if: startsWith(github.ref, 'refs/tags/') && steps.check-existing.outputs.exists != 'true'
               run: |
                   REPO="${{ env.OCI_REPO }}"
-                  VERSION="${{ steps.version.outputs.ogc_version }}.${{ steps.buildnum.outputs.build_num }}"
+                  VERSION="${{ steps.version.outputs.sogc_version }}.${{ steps.buildnum.outputs.build_num }}"
                   oras tag "${REPO}:${VERSION}-fc${{ matrix.fedora_version }}" \
                     "sha-${{ steps.content-hash.outputs.hash }}-fc${{ matrix.fedora_version }}"
 
             - name: Sign artifacts
               if: startsWith(github.ref, 'refs/tags/') && steps.check-existing.outputs.exists != 'true'
               run: |
-                  VERSION="${{ steps.version.outputs.ogc_version }}.${{ steps.buildnum.outputs.build_num }}"
+                  VERSION="${{ steps.version.outputs.sogc_version }}.${{ steps.buildnum.outputs.build_num }}"
                   REPO="${{ env.OCI_REPO }}"
                   cosign sign --yes "${REPO}:${VERSION}-fc${{ matrix.fedora_version }}"
                   cosign sign --yes "${REPO}:latest-fc${{ matrix.fedora_version }}"
@@ -278,7 +278,7 @@ jobs:
             - name: Verify signature
               if: startsWith(github.ref, 'refs/tags/') && steps.check-existing.outputs.exists != 'true'
               run: |
-                  VERSION="${{ steps.version.outputs.ogc_version }}.${{ steps.buildnum.outputs.build_num }}"
+                  VERSION="${{ steps.version.outputs.sogc_version }}.${{ steps.buildnum.outputs.build_num }}"
                   REPO="${{ env.OCI_REPO }}"
                   cosign verify \
                     --certificate-identity-regexp=".*" \
