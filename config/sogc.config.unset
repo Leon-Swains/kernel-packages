@@ -1,4 +1,4 @@
-# Globally required OGC options layered on top of all configs
+# Globally required SOGC options layered on top of all configs
 
 # Steam Deck
 CONFIG_USB_DWC3_HOST
