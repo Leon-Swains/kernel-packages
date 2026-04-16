@@ -32,7 +32,7 @@
 %endif
 
 Name: kernel
-Summary: The Linux Kernel with Open Gaming Collective (OGC) patches
+Summary: The Linux Kernel with Open Gaming Collective (SOGC) patches
 
 %define _basekver @@BASEKVER@@
 %define _stablekver @@STABLEKVER@@
@@ -44,9 +44,9 @@ Summary: The Linux Kernel with Open Gaming Collective (OGC) patches
 
 Version: %{_basekver}.%{_stablekver}
 
-%define ogcver @@OGCVER@@
+%define sogcver @@SOGCVER@@
 %define buildnum @@BUILDNUM@@
-Release: ogc%{ogcver}.%{buildnum}%{?dist}
+Release: sogc%{sogcver}.%{buildnum}%{?dist}
 
 # Define rawhide fedora version
 %define _rawhidever 44
@@ -57,7 +57,7 @@ Release: ogc%{ogcver}.%{buildnum}%{?dist}
 
 License: GPLv2 and Redistributable, no modifications permitted
 Group: System Environment/Kernel
-Vendor: The Linux Community and OGC maintainer(s)
+Vendor: The Linux Community and SOGC maintainer(s)
 URL: https://opengamingcollective.org
 Source0: linux-%{_tarkver}.tar.xz
 Source1: config
@@ -331,7 +331,7 @@ analysing the logical and timing behavior of Linux.
 %prep
 %setup -q -n linux-%{_tarkver}
 
-# Apply OGC patch
+# Apply SOGC patch
 patch -p1 -i %{PATCH0}
 
 # Fetch the config and move it to the proper directory
@@ -347,7 +347,7 @@ scripts/config --set-str BUILD_SALT "%{kverstr}"
 make olddefconfig
 
 # Save configuration for later reuse
-cat .config > config-linux-ogc
+cat .config > config-linux-sogc
 
 %build
 make %{?_smp_mflags} %{?llvm_build_env_vars} EXTRAVERSION=-%{krelstr}
